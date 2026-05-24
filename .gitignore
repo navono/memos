@@ -22,3 +22,7 @@ build
 bin/air
 
 dev-dist
+
+__pycache__
+agent/data
+agent/agent_data
