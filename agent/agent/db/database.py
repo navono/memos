@@ -40,8 +40,11 @@ class AgentDB:
         self._db: aiosqlite.Connection | None = None
 
     async def initialize(self, data_dir: str) -> None:
-        Path(data_dir).mkdir(parents=True, exist_ok=True)
-        db_path = Path(data_dir) / "agent.db"
+        if data_dir == ":memory:":
+            db_path = ":memory:"
+        else:
+            Path(data_dir).mkdir(parents=True, exist_ok=True)
+            db_path = Path(data_dir) / "agent.db"
         self._db = await aiosqlite.connect(str(db_path))
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA journal_mode=WAL")
