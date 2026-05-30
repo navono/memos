@@ -85,3 +85,57 @@ async def list_tags() -> str:
     if not tags:
         return "No tags found."
     return json.dumps(tags, ensure_ascii=False)
+
+
+@tool
+async def list_resources(limit: int = 20) -> str:
+    """List all resources/attachments owned by the user. Returns id, filename, type, size, and external link."""
+    client, auth_token, _ = _get_request_context()
+    resources = await client.list_resources(auth_token, limit=limit)
+    if not resources:
+        return "No resources found."
+    results = []
+    for r in resources:
+        entry = {
+            "id": r["id"],
+            "filename": r.get("filename", ""),
+            "type": r.get("type", ""),
+            "size": r.get("size", 0),
+        }
+        if r.get("externalLink"):
+            entry["externalLink"] = r["externalLink"]
+        results.append(entry)
+    return json.dumps(results, ensure_ascii=False)
+
+
+@tool
+async def create_resource(filename: str, external_link: str, resource_type: str = "") -> str:
+    """Create a new resource with an external link. Use this to attach online files/images to memos. The filename should include the extension."""
+    client, auth_token, _ = _get_request_context()
+    resource = await client.create_resource(auth_token, filename, external_link, resource_type)
+    return json.dumps({
+        "id": resource["id"],
+        "filename": resource.get("filename", ""),
+        "externalLink": resource.get("externalLink", ""),
+        "type": resource.get("type", ""),
+        "size": resource.get("size", 0),
+    }, ensure_ascii=False)
+
+
+@tool
+async def update_resource(resource_id: int, filename: str) -> str:
+    """Rename a resource's filename. Provide the resource ID and the new filename."""
+    client, auth_token, _ = _get_request_context()
+    resource = await client.update_resource(auth_token, resource_id, filename)
+    return json.dumps({
+        "id": resource["id"],
+        "filename": resource.get("filename", ""),
+    }, ensure_ascii=False)
+
+
+@tool
+async def delete_resource(resource_id: int) -> str:
+    """Delete a resource/attachment by its ID. This action is irreversible."""
+    client, auth_token, _ = _get_request_context()
+    await client.delete_resource(auth_token, resource_id)
+    return f"Resource {resource_id} deleted."

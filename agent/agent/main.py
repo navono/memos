@@ -16,10 +16,14 @@ from agent.routes.chat import chat_router
 from agent.routes.config import config_router
 from agent.tools.memos import (
     create_memo,
+    create_resource,
+    delete_resource,
     get_memo,
+    list_resources,
     list_tags,
     search_memos,
     set_memos_client,
+    update_resource,
 )
 from agent.tools.memos_client import MemosClient
 
@@ -53,7 +57,7 @@ async def lifespan(app: FastAPI):
 
     agent = create_deep_agent(
         model=model,
-        tools=[search_memos, get_memo, create_memo, list_tags],
+        tools=[search_memos, get_memo, create_memo, list_tags, list_resources, create_resource, update_resource, delete_resource],
         system_prompt=None,
         checkpointer=checkpointer,
     )

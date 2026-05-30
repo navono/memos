@@ -6,10 +6,14 @@ import pytest
 
 from agent.tools.memos import (
     create_memo,
+    create_resource,
+    delete_resource,
     get_memo,
+    list_resources,
     list_tags,
     search_memos,
     set_memos_client,
+    update_resource,
 )
 from agent.tools.memos_client import MemosClient
 
@@ -195,3 +199,122 @@ class TestToolContext:
         with patch("agent.tools.memos.get_config", return_value={}):
             with pytest.raises(KeyError):
                 await search_memos.ainvoke({"content": "test"})
+
+
+@pytest.mark.asyncio
+class TestListResources:
+    """Tests for list_resources tool."""
+
+    async def test_list_resources_returns_data(self, mock_client, mock_config):
+        """list_resources should return resource list."""
+        mock_client.list_resources = AsyncMock(return_value=[
+            {"id": 1, "filename": "photo.jpg", "type": "image/jpeg", "size": 1024, "externalLink": "https://example.com/photo.jpg"},
+            {"id": 2, "filename": "doc.pdf", "type": "application/pdf", "size": 2048},
+        ])
+        result = await list_resources.ainvoke({})
+        assert "photo.jpg" in result
+        assert "doc.pdf" in result
+        mock_client.list_resources.assert_called_once()
+
+    async def test_list_resources_empty(self, mock_client, mock_config):
+        """list_resources should return message when no resources."""
+        mock_client.list_resources = AsyncMock(return_value=[])
+        result = await list_resources.ainvoke({})
+        assert "no resource" in result.lower()
+
+    async def test_list_resources_passes_limit(self, mock_client, mock_config):
+        """list_resources should pass limit parameter."""
+        mock_client.list_resources = AsyncMock(return_value=[])
+        await list_resources.ainvoke({"limit": 5})
+        call_args = mock_client.list_resources.call_args
+        assert call_args.kwargs["limit"] == 5
+
+    async def test_list_resources_passes_auth_token(self, mock_client, mock_config):
+        """list_resources should use auth_token from config."""
+        mock_client.list_resources = AsyncMock(return_value=[])
+        await list_resources.ainvoke({})
+        call_args = mock_client.list_resources.call_args
+        assert call_args.args[0] == "test-token"
+
+
+@pytest.mark.asyncio
+class TestCreateResource:
+    """Tests for create_resource tool."""
+
+    async def test_create_resource_returns_data(self, mock_client, mock_config):
+        """create_resource should return created resource data."""
+        mock_client.create_resource = AsyncMock(return_value={
+            "id": 10, "filename": "image.png", "externalLink": "https://example.com/img.png",
+            "type": "image/png", "size": 0,
+        })
+        result = await create_resource.ainvoke({
+            "filename": "image.png", "external_link": "https://example.com/img.png",
+        })
+        assert "10" in result
+        assert "image.png" in result
+        mock_client.create_resource.assert_called_once()
+
+    async def test_create_resource_with_type(self, mock_client, mock_config):
+        """create_resource should pass resource_type."""
+        mock_client.create_resource = AsyncMock(return_value={
+            "id": 11, "filename": "data.json", "externalLink": "https://example.com/data.json",
+            "type": "application/json", "size": 0,
+        })
+        await create_resource.ainvoke({
+            "filename": "data.json",
+            "external_link": "https://example.com/data.json",
+            "resource_type": "application/json",
+        })
+        call_args = mock_client.create_resource.call_args
+        assert call_args.args[3] == "application/json"
+
+    async def test_create_resource_passes_auth_token(self, mock_client, mock_config):
+        """create_resource should use auth_token from config."""
+        mock_client.create_resource = AsyncMock(return_value={
+            "id": 1, "filename": "f.txt", "externalLink": "http://x", "type": "", "size": 0,
+        })
+        await create_resource.ainvoke({"filename": "f.txt", "external_link": "http://x"})
+        call_args = mock_client.create_resource.call_args
+        assert call_args.args[0] == "test-token"
+
+
+@pytest.mark.asyncio
+class TestUpdateResource:
+    """Tests for update_resource tool."""
+
+    async def test_update_resource_returns_data(self, mock_client, mock_config):
+        """update_resource should return updated resource data."""
+        mock_client.update_resource = AsyncMock(return_value={
+            "id": 5, "filename": "renamed.jpg",
+        })
+        result = await update_resource.ainvoke({"resource_id": 5, "filename": "renamed.jpg"})
+        assert "renamed.jpg" in result
+        assert "5" in result
+
+    async def test_update_resource_passes_args(self, mock_client, mock_config):
+        """update_resource should pass resource_id and filename."""
+        mock_client.update_resource = AsyncMock(return_value={"id": 5, "filename": "new.png"})
+        await update_resource.ainvoke({"resource_id": 5, "filename": "new.png"})
+        call_args = mock_client.update_resource.call_args
+        assert call_args.args[1] == 5
+        assert call_args.args[2] == "new.png"
+
+
+@pytest.mark.asyncio
+class TestDeleteResource:
+    """Tests for delete_resource tool."""
+
+    async def test_delete_resource_success(self, mock_client, mock_config):
+        """delete_resource should return success message."""
+        mock_client.delete_resource = AsyncMock(return_value=True)
+        result = await delete_resource.ainvoke({"resource_id": 7})
+        assert "7" in result
+        assert "deleted" in result.lower()
+
+    async def test_delete_resource_passes_args(self, mock_client, mock_config):
+        """delete_resource should pass resource_id and auth_token."""
+        mock_client.delete_resource = AsyncMock(return_value=True)
+        await delete_resource.ainvoke({"resource_id": 7})
+        call_args = mock_client.delete_resource.call_args
+        assert call_args.args[0] == "test-token"
+        assert call_args.args[1] == 7

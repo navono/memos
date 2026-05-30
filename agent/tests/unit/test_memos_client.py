@@ -155,3 +155,81 @@ class TestMemosClient:
         client._http.get = AsyncMock(return_value=_mock_response(status_code=500))
         with pytest.raises(httpx.HTTPStatusError):
             await client.search_memos("token", content="test")
+
+    async def test_list_resources_returns_data(self, client):
+        """list_resources should return list of resources."""
+        client._http.get = AsyncMock(return_value=_mock_response(json_data=[
+            {"id": 1, "filename": "photo.jpg", "type": "image/jpeg", "size": 1024},
+            {"id": 2, "filename": "doc.pdf", "type": "application/pdf", "size": 2048},
+        ]))
+        result = await client.list_resources("token")
+        assert len(result) == 2
+        assert result[0]["filename"] == "photo.jpg"
+        call_args = client._http.get.call_args
+        assert "/api/v1/resource" in call_args.args[0]
+
+    async def test_list_resources_with_pagination(self, client):
+        """list_resources should pass limit and offset."""
+        client._http.get = AsyncMock(return_value=_mock_response(json_data=[]))
+        await client.list_resources("token", limit=5, offset=10)
+        call_args = client._http.get.call_args
+        assert call_args.kwargs["params"]["limit"] == 5
+        assert call_args.kwargs["params"]["offset"] == 10
+
+    async def test_get_resource_found(self, client):
+        """get_resource should return resource when ID matches."""
+        client._http.get = AsyncMock(return_value=_mock_response(json_data=[
+            {"id": 1, "filename": "a.jpg"},
+            {"id": 2, "filename": "b.png"},
+        ]))
+        result = await client.get_resource("token", 2)
+        assert result is not None
+        assert result["filename"] == "b.png"
+
+    async def test_get_resource_not_found(self, client):
+        """get_resource should return None when ID not found."""
+        client._http.get = AsyncMock(return_value=_mock_response(json_data=[
+            {"id": 1, "filename": "a.jpg"},
+        ]))
+        result = await client.get_resource("token", 99)
+        assert result is None
+
+    async def test_create_resource_returns_data(self, client):
+        """create_resource should POST and return created resource."""
+        client._http.post = AsyncMock(return_value=_mock_response(json_data={
+            "id": 3, "filename": "img.png", "externalLink": "https://x.com/img.png",
+            "type": "image/png", "size": 0,
+        }))
+        result = await client.create_resource("token", "img.png", "https://x.com/img.png", "image/png")
+        assert result["id"] == 3
+        call_args = client._http.post.call_args
+        assert call_args.kwargs["json"]["filename"] == "img.png"
+        assert call_args.kwargs["json"]["type"] == "image/png"
+
+    async def test_create_resource_without_type(self, client):
+        """create_resource should omit type when empty."""
+        client._http.post = AsyncMock(return_value=_mock_response(json_data={
+            "id": 4, "filename": "f.txt", "externalLink": "http://x", "type": "", "size": 0,
+        }))
+        await client.create_resource("token", "f.txt", "http://x")
+        call_args = client._http.post.call_args
+        assert "type" not in call_args.kwargs["json"]
+
+    async def test_update_resource_sends_patch(self, client):
+        """update_resource should PATCH with new filename."""
+        client._http.patch = AsyncMock(return_value=_mock_response(json_data={
+            "id": 5, "filename": "renamed.jpg",
+        }))
+        result = await client.update_resource("token", 5, "renamed.jpg")
+        assert result["filename"] == "renamed.jpg"
+        call_args = client._http.patch.call_args
+        assert "/api/v1/resource/5" in call_args.args[0]
+        assert call_args.kwargs["json"]["filename"] == "renamed.jpg"
+
+    async def test_delete_resource_sends_delete(self, client):
+        """delete_resource should DELETE the resource."""
+        client._http.delete = AsyncMock(return_value=_mock_response(json_data=True))
+        result = await client.delete_resource("token", 7)
+        assert result is True
+        call_args = client._http.delete.call_args
+        assert "/api/v1/resource/7" in call_args.args[0]
