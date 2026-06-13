@@ -10,15 +10,21 @@ GOPROXY ?= https://goproxy.cn,direct
 
 # --- Dev commands ---
 
-## Start all services for development
-dev: dev-backend dev-web dev-agent
+## Start all dev services in parallel: backend (5230), web (3001), agent (8082)
+## Ctrl-C stops all of them. Each log line is prefixed by its service.
+dev:
+	@trap 'kill 0' INT TERM EXIT; \
+	$(MAKE) --no-print-directory dev-backend 2>&1 | sed -u 's/^/[backend] /' & \
+	$(MAKE) --no-print-directory dev-web     2>&1 | sed -u 's/^/[web]     /' & \
+	$(MAKE) --no-print-directory dev-agent   2>&1 | sed -u 's/^/[agent]   /' & \
+	wait
 
-## Start Memos backend (Go, dev mode, port 5230)
+## Start Memos backend (Go, port 5230, data dir output/db)
 dev-backend:
-	GOPROXY=$(GOPROXY) $(GO) run ./bin/memos/main.go --mode dev --port 5230
+	GOPROXY=$(GOPROXY) $(GO) run ./cmd/memos/ --port 5230 --data output/db
 
 ## Start web frontend (React, port 3001, proxies API to backend port 5230)
-dev-web: type-gen
+dev-web:
 	cd web && DEV_PROXY_SERVER=http://localhost:5230 $(PNPM) dev
 
 ## Start agent service (Python, port 8082)
@@ -40,9 +46,9 @@ stop:
 agent-setup:
 	cd agent && $(UV) sync
 
-## Generate TypeScript types from protobuf
+## Regenerate Go and TypeScript code from protobuf (requires buf: brew install buf)
 type-gen:
-	cd web && $(PNPM) i && $(PNPM) type-gen
+	cd proto && buf generate
 
 # --- Test ---
 

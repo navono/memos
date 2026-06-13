@@ -37,3 +37,6 @@ dev-dist
 __pycache__
 agent/data
 agent/agent_data
+
+# Captured output of `make dev` (run as `make dev > output 2>&1`)
+output
