@@ -59,9 +59,12 @@ export const useMemoInit = ({
       if (defaultVisibility !== undefined) {
         dispatch(actions.setMetadata({ visibility: defaultVisibility }));
       }
-      if (defaultCreateTime) {
-        dispatch(actions.setTimestamps({ createTime: defaultCreateTime, updateTime: defaultCreateTime }));
-      }
+      // Seed createTime so the timestamp popover is always visible/editable in
+      // create mode (users can backdate missed posts). A filter-derived
+      // defaultCreateTime wins; otherwise fall back to "now". updateTime is
+      // irrelevant for new memos and is left unset.
+      const initialCreateTime = defaultCreateTime ?? new Date();
+      dispatch(actions.setTimestamps({ createTime: initialCreateTime }));
     }
 
     if (autoFocus) {

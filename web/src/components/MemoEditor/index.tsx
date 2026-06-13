@@ -83,20 +83,17 @@ const MemoEditorImpl: React.FC<MemoEditorProps> = ({
   // Focus mode management with body scroll lock
   useFocusMode(state.ui.isFocusMode);
 
-  // Live-sync the draft's createTime/updateTime to the calendar-derived prop.
-  // Only applies in create mode; edit mode owns its own timestamps. Runs after
+  // Live-sync the draft's createTime to the calendar-derived prop. Only
+  // applies in create mode; edit mode owns its own timestamps. Runs after
   // initial mount (the seed value is set in useMemoInit), and again whenever
   // the prop changes — e.g., when the user picks a different calendar date
-  // while the editor is open.
+  // while the editor is open. Skipped when defaultCreateTime is undefined so
+  // we never clobber a user-picked or "now"-seeded createTime with undefined.
   useEffect(() => {
     if (memo) return;
     if (!isInitialized) return;
-    dispatch(
-      actions.setTimestamps({
-        createTime: defaultCreateTime,
-        updateTime: defaultCreateTime,
-      }),
-    );
+    if (!defaultCreateTime) return;
+    dispatch(actions.setTimestamps({ createTime: defaultCreateTime }));
   }, [defaultCreateTime, memo, isInitialized, actions, dispatch]);
 
   useEffect(() => {
@@ -236,7 +233,10 @@ const MemoEditorImpl: React.FC<MemoEditorProps> = ({
     dispatch(actions.setLoading("saving", true));
 
     try {
-      const result = await memoService.save(state, { memoName, parentMemoName });
+      const result = await memoService.save(state, {
+        memoName,
+        parentMemoName,
+      });
 
       if (!result.hasChanges) {
         toast.error(t("editor.no-changes-detected"));
@@ -256,27 +256,37 @@ const MemoEditorImpl: React.FC<MemoEditorProps> = ({
 
       // Ensure memo detail pages don't keep stale cached content after edits.
       if (memoName) {
-        invalidationPromises.push(queryClient.invalidateQueries({ queryKey: memoKeys.detail(memoName) }));
+        invalidationPromises.push(
+          queryClient.invalidateQueries({
+            queryKey: memoKeys.detail(memoName),
+          }),
+        );
       }
 
       // If this was a comment, also invalidate the comments query for the parent memo
       if (parentMemoName) {
-        invalidationPromises.push(queryClient.invalidateQueries({ queryKey: memoKeys.comments(parentMemoName) }));
+        invalidationPromises.push(
+          queryClient.invalidateQueries({
+            queryKey: memoKeys.comments(parentMemoName),
+          }),
+        );
       }
 
       await Promise.all(invalidationPromises);
 
       // Reset editor state to initial values
+      const submittedCreateTime = state.timestamps.createTime;
       dispatch(actions.reset());
       if (!memoName && defaultVisibility) {
         dispatch(actions.setMetadata({ visibility: defaultVisibility }));
       }
-      // Re-seed the calendar-derived timestamps so the popover stays visible
-      // and subsequent memos in the same filter session keep the prefilled date.
-      // Without this, the live-sync effect won't re-fire (its deps don't change
-      // across reset), and memo #2 onward would silently fall back to "now".
-      if (!memoName && defaultCreateTime) {
-        dispatch(actions.setTimestamps({ createTime: defaultCreateTime, updateTime: defaultCreateTime }));
+      // Re-seed createTime for the next memo in the same session so the
+      // popover stays visible. A filter-derived defaultCreateTime wins;
+      // otherwise reuse the just-submitted value so a manual backdate sticks
+      // across consecutive memos. updateTime is irrelevant for new memos.
+      if (!memoName) {
+        const nextCreateTime = defaultCreateTime ?? submittedCreateTime ?? new Date();
+        dispatch(actions.setTimestamps({ createTime: nextCreateTime }));
       }
 
       // Notify parent component of successful save
@@ -312,9 +322,9 @@ const MemoEditorImpl: React.FC<MemoEditorProps> = ({
         {/* Exit button is absolutely positioned in top-right corner when active */}
         <FocusModeExitButton isActive={state.ui.isFocusMode} onToggle={handleToggleFocusMode} title={t("editor.exit-focus-mode")} />
 
-        {(memoName || (!memo && state.timestamps.createTime)) && (
+        {(memoName || !memo) && (
           <div className="w-full -mb-1">
-            <TimestampPopover />
+            <TimestampPopover showUpdateTime={Boolean(memoName)} />
           </div>
         )}
 
