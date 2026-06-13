@@ -1,4 +1,5 @@
-.PHONY: dev-backend dev-web dev-agent dev stop test-go test-agent test-agent-unit test-agent-api test-agent-integration
+.PHONY: dev-backend dev-web dev-agent dev stop test-go test-agent test-agent-unit test-agent-api test-agent-integration \
+        docker-build docker-push docker-login docker-run docker-stop docker-pull docker-compose-up docker-compose-down
 
 # Tool paths (mise-managed)
 GO      := $(shell mise which go 2>/dev/null || echo go)
@@ -49,6 +50,56 @@ agent-setup:
 ## Regenerate Go and TypeScript code from protobuf (requires buf: brew install buf)
 type-gen:
 	cd proto && buf generate
+
+# --- Docker ---
+
+# Image defaults. Override on the command line:
+#   make docker-build TAG=personal-fd18f559 PLATFORM=linux/amd64
+IMAGE    ?= navono/memos
+TAG      ?= personal
+PLATFORM ?= linux/arm64
+
+## Build the Docker image (runs `pnpm release` first to embed frontend assets)
+docker-build:
+	cd web && $(PNPM) release && cd ..
+	docker build -f scripts/Dockerfile \
+	  -t $(IMAGE):$(TAG) \
+	  --build-arg VERSION=$(TAG) \
+	  --build-arg COMMIT=$$(git rev-parse --short HEAD) \
+	  --platform=$(PLATFORM) .
+
+## Push the image to the configured registry (run `make docker-login` first)
+docker-push:
+	docker push $(IMAGE):$(TAG)
+
+## Log in to Docker Hub (interactive; pass a username and PAT/password)
+docker-login:
+	docker login
+
+## Run the image locally for smoke testing (port 5230, data dir output/docker-data)
+docker-run:
+	docker run -d --name memos --rm \
+	  -p 5230:5230 \
+	  -v $$(pwd)/output/docker-data:/var/opt/memos \
+	  -e MEMOS_PORT=5230 \
+	  $(IMAGE):$(TAG)
+
+## Stop and remove the local memos container
+docker-stop:
+	docker stop memos 2>/dev/null || true
+	docker rm memos 2>/dev/null || true
+
+## Pull the image (use on the server before redeploying)
+docker-pull:
+	docker pull $(IMAGE):$(TAG)
+
+## Start the stack via docker compose (uses scripts/compose.yaml)
+docker-compose-up:
+	docker compose -f scripts/compose.yaml up -d
+
+## Stop the stack via docker compose
+docker-compose-down:
+	docker compose -f scripts/compose.yaml down
 
 # --- Test ---
 
