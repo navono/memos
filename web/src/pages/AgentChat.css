@@ -1,3 +1,6 @@
+.agent-sidebar {
+  overflow: hidden;
+}
 .agent-markdown p {
   margin: 0.25em 0;
 }
