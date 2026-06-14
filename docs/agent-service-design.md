@@ -1,6 +1,24 @@
 # Agent Service Design
 
-Memos Agent 是一个独立的 Python 服务，采用多 agent 架构，通过 Router + 专职 Agent 模式提供 LLM 驱动的智能能力，包括对话、摘要、标签推荐等。
+Memos Agent 是一个独立的 Python 服务，采用多 agent 架构，通过 Router + 专职 Agent 模式提供 LLM 驱动的智能能力，包括对话、摘要、标签推荐、景点推荐等。
+
+## Current State (2026-06)
+
+### 已实现
+
+| 层               | 现状                                                                                                                                                                                                                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Go 后端**      | `AIService` 只有 `Transcribe`（语音转文字）一个 RPC。`internal/ai/` 封装了 STT/AudioLLM。`InstanceAISetting` 存储 provider 配置（OpenAI/Gemini），但没有 agent 概念                                                                                                                                    |
+| **Python Agent** | `agent/` 用 FastAPI + LangChain `deepagents` 构建了**通用聊天 agent**，有 `search_memos`/`get_memo`/`create_memo`/`list_tags`/`list_resources`/`create_resource`/`update_resource`/`delete_resource` 共 8 个 tools，SSE 流式输出。**没有多 agent 概念**，所有请求走同一个 system prompt + 同一组 tools |
+| **前端**         | 没有与 agent 服务交互的 UI。`AISection` 只管理 provider 和转录配置                                                                                                                                                                                                                                     |
+| **MCP**          | Go 后端已有完整的 MCP server（`server/router/mcp/`），基于 OpenAPI spec 自动暴露 API 为 MCP tools，走 StreamableHTTP 协议。Python agent 未利用此能力                                                                                                                                                   |
+
+### 核心差距
+
+1. **Agent 是单体的** — 一个 `create_deep_agent` 处理所有请求，无法按功能分类
+2. **缺少 Agent 注册/发现机制** — 没有方式定义、注册、列出可用的 agents
+3. **前端无 Agent 交互入口** — 用户无法选择和调用特定 agent
+4. **MCP 与 Agent 割裂** — Go 端的 MCP server 已可暴露 API，但 Python agent 没有利用 MCP client 来连接外部服务（搜索、地图等）
 
 ## Architecture Overview
 
@@ -729,46 +747,202 @@ volumes:
 
 Agent 是可选服务——不启动 agent 容器、不配 `MEMOS_AGENT_ADDR` 时，Memos 正常运行。
 
-## Implementation Priority
+## Implementation Roadmap
 
-Phase 1 — MVP（单 agent）：
+> 基于当前代码现状（2026-06）的增量实施计划。Phase 1 的单 agent MVP 已基本完成（`agent/` 目录下的 deepagents 实现），以下从多 agent 架构开始。
 
-1. LLM provider（单 provider，如 OpenAI）
-2. Tools（基础 CRUD：search、get、create）
-3. Memory（short_term，对话上下文）
-4. Context builder（基础版）
-5. Runtime（简单 ReAct loop）
-6. Memos 代理层
-7. 基础 observability（日志）
+### Phase 1 — Agent Framework（核心框架）⏱ 3-4 天
 
-Phase 2 — 多 agent 架构：
+将当前单体 agent 拆分为可配置的多 agent 架构。
 
-1. Agent 基类与注册表
-2. Router agent（意图识别与分发）
-3. 专职 agent（summarizer、qa、tagger）
-4. Orchestrator（single 模式）
-5. Agent 管理接口（列表、启用/禁用）
-6. Memory 按 agent 隔离
+**1.1 Agent 定义协议（YAML）**
 
-Phase 3 — MCP 集成与增强：
+每个 agent 由一个 YAML 配置定义，放在 `agent/agents/` 目录下：
 
-1. MCP client（stdio + SSE 传输）
-2. MCP tool adapter（远程工具适配为本地 Tool 接口）
-3. MCP server 配置管理（YAML + API）
-4. 网络搜索 MCP server 集成（Tavily / Brave）
-5. 流式响应（SSE）
-6. Prompt 模板管理（按 agent 组织）
-7. Guardrails（输入/输出过滤）
+```yaml
+# agent/agents/summary.yaml
+id: summary
+name: Summary Agent
+description: "总结指定时间范围内的 memos，提取关键事件和人物"
+icon: bar-chart-3
+system_prompt: |
+  你是一个总结助手。用户会要求你总结某段时间内的 memos，
+  请使用 search_memos 查找相关内容，然后生成结构化总结。
+  总结应包含：关键事件、涉及人物、时间线。
+tools:
+  - search_memos
+  - get_memo
+  - list_tags
+mcp_servers: [] # 暂时不需要外部 MCP
+```
 
-Phase 4 — 高级编排与扩展：
+```yaml
+# agent/agents/recommend.yaml
+id: recommend
+name: Recommend Agent
+description: "推荐附近的游玩景点、餐厅等"
+icon: map-pin
+system_prompt: |
+  你是一个推荐助手。根据用户的位置和偏好推荐周边景点。
+  先用 search_memos 了解用户历史偏好，再通过搜索获取推荐。
+tools:
+  - search_memos
+  - get_memo
+mcp_servers:
+  - name: web-search
+    url: http://localhost:8083/mcp
+```
 
-1. Pipeline 编排模式（串行多 agent）
+```yaml
+# agent/agents/general.yaml
+id: general
+name: General Chat
+description: "通用对话助手，回答关于 memos 的问题"
+icon: message-square
+system_prompt: |
+  你是一个通用助手，帮助用户管理 memos。
+tools:
+  - search_memos
+  - get_memo
+  - create_memo
+  - list_tags
+  - list_resources
+  - create_resource
+  - update_resource
+  - delete_resource
+mcp_servers: []
+```
+
+**1.2 Agent Registry（Python 端）**
+
+- 新增 `agent/registry.py` — 加载 YAML 定义的 agent 配置，动态创建 LangGraph agent
+- 每个 agent 有独立的 system prompt + tool 子集 + 可选的 MCP client 连接
+- `create_deep_agent` 改为 `create_agent(agent_config)` 工厂方法
+- agent 间共享 checkpointer 和 MemosClient
+
+**1.3 API 扩展**
+
+```
+GET  /v1/agents                — 列出所有可用 agents（id, name, description, icon）
+POST /v1/chat                  — 增加 agent_id 参数，路由到对应 agent
+GET  /v1/agents/{agent_id}     — 获取 agent 详情
+```
+
+`/v1/chat` 请求体变为：
+
+```json
+{
+  "message": "总结我这个月做了什么",
+  "agent_id": "summary",
+  "conversation_id": "xxx"
+}
+```
+
+**1.4 对话隔离**
+
+- conversation 表增加 `agent_id` 列
+- 同一用户在不同 agent 下的对话互不干扰
+- checkpointer 的 `thread_id` 使用 `{agent_id}:{conversation_id}` 复合键
+
+### Phase 2 — MCP Client 集成 ⏱ 2-3 天
+
+让 agent 能通过 MCP 协议调用外部服务。
+
+**2.1 Python 端 MCP Client**
+
+- 集成 `langchain-mcp-adapters`，将 MCP tools 转为 LangChain tools
+- 通过 YAML 配置连接外部 MCP server，动态加载 tools
+- agent 启动时根据配置连接 MCP servers，获取可用 tools 并注入对应 agent
+
+**2.2 利用现有 Go MCP Server**
+
+- Go 端已有 `server/router/mcp/` 暴露了 memos 的 API
+- Python agent 可作为 MCP **client** 连接 Go 端的 MCP server，替代当前硬编码的 `MemosClient`
+- 短期保留 MemosClient 以避免破坏，长期可迁移为 MCP 调用
+
+**2.3 外部 MCP Server 支持**
+
+- 用户可在 YAML 中配置外部 MCP server URL
+- agent 启动时连接这些 MCP server，获取可用 tools 并注入对应 agent
+- 例如：搜索服务（Tavily/Brave）、地图服务、天气服务等
+- MCP server 不可用时降级：标记该 server 的 tools 为不可用，agent 仍可使用内置 tools
+
+### Phase 3 — 前端 UI ⏱ 4-5 天
+
+**3.1 Agent 交互入口**
+
+- 独立的 Chat 页面，左侧可切换 agent，右侧对话
+- 对话历史按 agent + conversation 隔离
+- 在 memo 详情页/列表页添加 Agent 快捷操作按钮（如"总结本页"）
+
+**3.2 Agent 管理（Admin）**
+
+- 在 Settings > AI 中新增 Agents tab
+- 显示内置 agents 列表（不可删除）
+- 支持添加自定义 agent（填写 name、description、system_prompt、选择 tools、配置 MCP servers）
+
+**3.3 快捷调用**
+
+- memo 列表页的筛选栏旁加 "Ask Agent" 按钮
+- 选择 agent 后自动注入上下文（如当前筛选的时间范围、tag 等）
+
+### Phase 4 — 自定义 Agent 支持 ⏱ 2-3 天
+
+**4.1 Agent 配置存储**
+
+- 自定义 agent 配置存入 agent 服务的 SQLite DB（`agents` 表）
+- 不存在 Go 后端，因为 agent 逻辑全在 Python 端
+
+**4.2 Agent 配置 API**
+
+```
+POST   /v1/agents              — 创建自定义 agent
+PUT    /v1/agents/{agent_id}   — 更新
+DELETE /v1/agents/{agent_id}   — 删除（仅自定义）
+```
+
+**4.3 Tool 权限控制**
+
+- 内置 tools（search_memos 等）可被任意 agent 引用
+- MCP tools 按 agent 配置绑定
+- 敏感 tool（create_memo, delete_resource）需要 admin 授权
+
+### Phase 5 — 高级编排与增强（后续）
+
+1. Pipeline 编排模式（串行多 agent，如 summarizer → tagger）
 2. Parallel 编排模式（并行多 agent）
-3. 用户级配置
+3. 用户级配置（语言风格、摘要粒度）
 4. 用量统计和配额（按 agent 统计）
 5. Long-term memory + shared memory
 6. Planner（复杂任务分解为多 agent 计划）
-7. 异步任务
+7. 异步任务（批量摘要等长时间任务）
 8. Multi-provider fallback
 9. 调用链追踪（OpenTelemetry）
-10. 自定义 agent 扩展机制
+10. Guardrails（输入/输出过滤、隐私控制）
+
+### 工作量汇总
+
+| Phase    | 内容                             | 预估         |
+| -------- | -------------------------------- | ------------ |
+| Phase 1  | Agent 框架 + Registry + API 扩展 | 3-4 天       |
+| Phase 2  | MCP Client 集成                  | 2-3 天       |
+| Phase 3  | 前端 UI                          | 4-5 天       |
+| Phase 4  | 自定义 Agent 支持                | 2-3 天       |
+| **合计** |                                  | **11-15 天** |
+
+### 关键技术决策
+
+| 决策点         | 建议                                                         | 理由                                                       |
+| -------------- | ------------------------------------------------------------ | ---------------------------------------------------------- |
+| Agent 定义格式 | YAML 文件（内置）+ DB（自定义）                              | 内置 agent 随代码版本管理，自定义 agent 需持久化           |
+| Agent 实现     | 共享 LangGraph 框架，每 agent 独立 system_prompt + tool 子集 | 复用 deepagents 的 ReAct 循环，不需要每个 agent 写独立代码 |
+| MCP Client     | `langchain-mcp-adapters`                                     | LangChain 生态原生支持，将 MCP tools 转为 LangChain tools  |
+| 对话隔离       | conversation_id + agent_id 复合键                            | 同一用户在不同 agent 下的对话互不干扰                      |
+| Agent 存储     | agent SQLite DB                                              | 不增加 Go 后端复杂度，agent 逻辑全在 Python 端             |
+
+### 风险点
+
+1. **MCP 连接稳定性** — 外部 MCP server 可能不可用，需要降级策略
+2. **LLM 成本** — 多 agent 意味着更多调用，需考虑 token 限制和成本
+3. **deepagents 兼容性** — `register_harness_profile` 当前排除了一些 tools，多 agent 场景需调整排除列表
+4. **并发** — 多 agent 共享 checkpointer，需确认 LangGraph 的并发安全性
