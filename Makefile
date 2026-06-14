@@ -1,4 +1,4 @@
-.PHONY: dev-backend dev-web dev-agent dev stop test-go test-agent test-agent-unit test-agent-api test-agent-integration \
+.PHONY: dev-backend dev-web dev-agent dev stop rebuild-payloads test-go test-agent test-agent-unit test-agent-api test-agent-integration \
         docker-build docker-push docker-login docker-run docker-stop docker-pull docker-compose-up docker-compose-down
 
 # Tool paths (mise-managed)
@@ -8,6 +8,11 @@ PNPM    := $(shell command -v pnpm 2>/dev/null || echo "npx pnpm")
 UV      := $(shell command -v uv 2>/dev/null || echo "python3 -m uv")
 
 GOPROXY ?= https://goproxy.cn,direct
+
+# Data dir for the backend (SQLite lives at $(DATA)/memos_prod.db).
+# Override on the command line: make dev DATA=/path/to/db
+# DATA ?= output/db
+DATA ?= /Users/pingqixing/data/NAS/memos
 
 # --- Dev commands ---
 
@@ -20,9 +25,9 @@ dev:
 	$(MAKE) --no-print-directory dev-agent   2>&1 | sed -u 's/^/[agent]   /' & \
 	wait
 
-## Start Memos backend (Go, port 5230, data dir output/db)
+## Start Memos backend (Go, port 5230, data dir $(DATA))
 dev-backend:
-	GOPROXY=$(GOPROXY) $(GO) run ./cmd/memos/ --port 5230 --data output/db
+	GOPROXY=$(GOPROXY) $(GO) run ./cmd/memos/ --port 5230 --data $(DATA)
 
 ## Start web frontend (React, port 3001, proxies API to backend port 5230)
 dev-web:
@@ -31,6 +36,11 @@ dev-web:
 ## Start agent service (Python, port 8082)
 dev-agent:
 	cd agent && $(UV) run uvicorn agent.main:app --reload --port 8082
+
+## Re-extract tags/properties from memo content into memo.Payload (one-shot maintenance)
+## Make sure backend is stopped before running. Override data dir: make rebuild-payloads DATA=/path
+rebuild-payloads:
+	GOPROXY=$(GOPROXY) $(GO) run ./cmd/memos/ rebuild-memo-payloads --data $(DATA)
 
 # --- Stop ---
 

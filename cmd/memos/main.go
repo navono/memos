@@ -13,10 +13,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/usememos/memos/internal/markdown"
 	"github.com/usememos/memos/internal/profile"
 	"github.com/usememos/memos/internal/version"
 	"github.com/usememos/memos/internal/webhook"
 	"github.com/usememos/memos/server"
+	"github.com/usememos/memos/server/runner/memopayload"
 	"github.com/usememos/memos/store"
 	"github.com/usememos/memos/store/db"
 )
@@ -108,6 +110,47 @@ var (
 			fmt.Println(version.GetCurrentVersion())
 		},
 	}
+	rebuildMemoPayloadsCmd = &cobra.Command{
+		Use:   "rebuild-memo-payloads",
+		Short: "Re-extract tags and properties from memo content into memo.Payload (one-shot maintenance)",
+		Run: func(_ *cobra.Command, _ []string) {
+			dataDir := viper.GetString("data")
+			if dataDir == "" {
+				slog.Error("--data is required")
+				return
+			}
+			profile := &profile.Profile{
+				Data:   dataDir,
+				Driver: viper.GetString("driver"),
+				DSN:    viper.GetString("dsn"),
+			}
+			profile.Version = version.GetCurrentVersion()
+			profile.Commit = version.Commit
+			if err := profile.Validate(); err != nil {
+				slog.Error("failed to validate profile", "error", err)
+				return
+			}
+
+			ctx := context.Background()
+			dbDriver, err := db.NewDBDriver(profile)
+			if err != nil {
+				slog.Error("failed to create db driver", "error", err)
+				return
+			}
+			storeInstance := store.New(dbDriver, profile)
+			if err := storeInstance.Migrate(ctx); err != nil {
+				slog.Error("failed to migrate", "error", err)
+				return
+			}
+
+			markdownService := markdown.NewService(
+				markdown.WithTagExtension(),
+				markdown.WithMentionExtension(),
+			)
+			memopayload.NewRunner(storeInstance, markdownService).RunOnce(ctx)
+			slog.Info("memo payload rebuild finished")
+		},
+	}
 )
 
 func init() {
@@ -164,6 +207,7 @@ func init() {
 	viper.AutomaticEnv()
 
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(rebuildMemoPayloadsCmd)
 }
 
 func printGreetings(profile *profile.Profile) {
