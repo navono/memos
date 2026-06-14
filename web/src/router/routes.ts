@@ -9,6 +9,7 @@ export const ROUTES = {
   EXPLORE: "/explore",
   AUTH: "/auth",
   SHARED_MEMO: "/memos/shares",
+  AGENT: "/agent",
 } as const;
 
 export type RouteKey = keyof typeof ROUTES;

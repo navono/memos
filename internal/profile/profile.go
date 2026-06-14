@@ -34,6 +34,9 @@ type Profile struct {
 	Commit string
 	// InstanceURL is the url of your memos instance.
 	InstanceURL string
+	// AgentAddr is the address of the agent service.
+	// Empty means agent features are disabled.
+	AgentAddr string
 }
 
 func checkDataDir(dataDir string) (string, error) {

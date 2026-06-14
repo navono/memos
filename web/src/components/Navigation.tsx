@@ -1,6 +1,19 @@
-import { BellIcon, EarthIcon, InfoIcon, LibraryIcon, PaperclipIcon, UserCircleIcon } from "lucide-react";
+import {
+  BellIcon,
+  BotIcon,
+  EarthIcon,
+  InfoIcon,
+  LibraryIcon,
+  PaperclipIcon,
+  UserCircleIcon,
+} from "lucide-react";
 import { NavLink } from "react-router-dom";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import useCurrentUser from "@/hooks/useCurrentUser";
 import { useNotifications } from "@/hooks/useUserQueries";
 import { cn } from "@/lib/utils";
@@ -52,7 +65,9 @@ const Navigation = (props: Props) => {
     title: t("common.attachments"),
     icon: <PaperclipIcon className="w-6 h-auto shrink-0" />,
   };
-  const unreadCount = notifications.filter((n) => n.status === UserNotification_Status.UNREAD).length;
+  const unreadCount = notifications.filter(
+    (n) => n.status === UserNotification_Status.UNREAD,
+  ).length;
   const inboxNavLink: NavLinkItem = {
     id: "header-inbox",
     path: Routes.INBOX,
@@ -76,14 +91,36 @@ const Navigation = (props: Props) => {
   };
 
   const primaryNavLinks: NavLinkItem[] = currentUser
-    ? [homeNavLink, exploreNavLink, attachmentsNavLink, inboxNavLink]
+    ? [
+        homeNavLink,
+        exploreNavLink,
+        attachmentsNavLink,
+        inboxNavLink,
+        {
+          id: "header-agent",
+          path: Routes.AGENT,
+          title: t("common.agent"),
+          icon: <BotIcon className="w-6 h-auto shrink-0" />,
+        },
+      ]
     : [exploreNavLink, aboutNavLink, signInNavLink];
-  const inboxAriaLabel = unreadCount > 0 ? `${t("common.inbox")}, ${unreadCount} unread` : t("common.inbox");
+  const inboxAriaLabel =
+    unreadCount > 0
+      ? `${t("common.inbox")}, ${unreadCount} unread`
+      : t("common.inbox");
 
   return (
-    <header className={cn("w-full h-full overflow-auto flex flex-col justify-between items-start gap-4", className)}>
+    <header
+      className={cn(
+        "w-full h-full overflow-auto flex flex-col justify-between items-start gap-4",
+        className,
+      )}
+    >
       <div className="w-full px-1 py-1 flex flex-col justify-start items-start space-y-2 overflow-auto overflow-x-hidden shrink">
-        <NavLink className="mb-3 cursor-default" to={currentUser ? Routes.HOME : Routes.EXPLORE}>
+        <NavLink
+          className="mb-3 cursor-default"
+          to={currentUser ? Routes.HOME : Routes.EXPLORE}
+        >
           <MemosLogo collapsed={collapsed} />
         </NavLink>
         <TooltipProvider>
@@ -102,7 +139,9 @@ const Navigation = (props: Props) => {
               to={navLink.path}
               end={navLink.path === Routes.HOME}
               id={navLink.id}
-              aria-label={navLink.id === "header-inbox" ? inboxAriaLabel : undefined}
+              aria-label={
+                navLink.id === "header-inbox" ? inboxAriaLabel : undefined
+              }
               viewTransition
             >
               {props.collapsed ? (
@@ -117,13 +156,20 @@ const Navigation = (props: Props) => {
               ) : (
                 navLink.icon
               )}
-              {!props.collapsed && <span className="ml-3 truncate">{navLink.title}</span>}
+              {!props.collapsed && (
+                <span className="ml-3 truncate">{navLink.title}</span>
+              )}
             </NavLink>
           ))}
         </TooltipProvider>
       </div>
       {currentUser && (
-        <div className={cn("w-full flex flex-col justify-end", props.collapsed ? "items-center" : "items-start pl-3")}>
+        <div
+          className={cn(
+            "w-full flex flex-col justify-end",
+            props.collapsed ? "items-center" : "items-start pl-3",
+          )}
+        >
           <UserMenu collapsed={collapsed} />
         </div>
       )}

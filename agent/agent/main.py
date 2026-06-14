@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from dotenv import load_dotenv
@@ -6,35 +7,22 @@ from fastapi import FastAPI
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from deepagents import HarnessProfile, create_deep_agent, register_harness_profile
-
 from agent.auth import AuthMiddleware
 from agent.config import settings
 from agent.db.database import AgentDB
 from agent.observability.logger import log
+from agent.registry import DEFAULT_AGENT_ID, load_agents_from_directory
+from agent.agent_factory import create_all_agents
+from agent.routes.agents import agents_router
 from agent.routes.chat import chat_router
 from agent.routes.config import config_router
-from agent.tools.memos import (
-    create_memo,
-    create_resource,
-    delete_resource,
-    get_memo,
-    list_resources,
-    list_tags,
-    search_memos,
-    set_memos_client,
-    update_resource,
-)
+from agent.tools.memos import set_memos_client
 from agent.tools.memos_client import MemosClient
 
 load_dotenv()
 
-register_harness_profile("openai", HarnessProfile(
-    excluded_tools=frozenset([
-        "write_todos", "ls", "read_file", "write_file", "edit_file",
-        "glob", "grep", "execute", "task",
-    ]),
-))
+
+_AGENTS_DIR = Path(__file__).parent / "agents"
 
 
 @asynccontextmanager
@@ -55,17 +43,19 @@ async def lifespan(app: FastAPI):
     checkpointer = AsyncSqliteSaver(db._db)
     await checkpointer.setup()
 
-    agent = create_deep_agent(
-        model=model,
-        tools=[search_memos, get_memo, create_memo, list_tags, list_resources, create_resource, update_resource, delete_resource],
-        system_prompt=None,
-        checkpointer=checkpointer,
-    )
+    agent_registry = load_agents_from_directory(_AGENTS_DIR)
+    agents = create_all_agents(agent_registry.list_agents(), model, checkpointer)
 
-    app.state.agent = agent
+    app.state.agents = agents
+    app.state.agent_registry = agent_registry
+    app.state.agent = agents.get(DEFAULT_AGENT_ID)
     app.state.memos_client = memos_client
 
-    log.info("agent service started", extra={"extra_data": {"port": settings.port, "model": settings.llm_model}})
+    log.info("agent service started", extra={"extra_data": {
+        "port": settings.port,
+        "model": settings.llm_model,
+        "agents": list(agents.keys()),
+    }})
 
     yield
 
@@ -77,6 +67,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Memos Agent", version="0.1.0", lifespan=lifespan)
 app.add_middleware(AuthMiddleware)
 app.include_router(chat_router, prefix="/v1")
+app.include_router(agents_router, prefix="/v1")
 app.include_router(config_router, prefix="/v1")
 
 if __name__ == "__main__":

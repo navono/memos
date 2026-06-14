@@ -47,6 +47,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path == "/v1/healthz":
             return await call_next(request)
 
+        # Trust X-User-Id from the Go proxy (already authenticated).
+        # The Go proxy verifies the JWT and injects X-User-Id and X-User-Name.
+        user_id = request.headers.get("X-User-Id", "")
+        if user_id:
+            try:
+                request.state.user_id = int(user_id)
+            except ValueError:
+                return _unauthorized("Invalid X-User-Id")
+            request.state.auth_token = request.headers.get("X-Auth-Token", "")
+            request.state.username = request.headers.get("X-User-Name", "")
+            return await call_next(request)
+
+        # Fallback: verify JWT directly (for direct agent access).
         token = request.headers.get("X-Auth-Token", "")
         if not token:
             auth_header = request.headers.get("Authorization", "")
@@ -62,5 +75,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         request.state.user_id = claims["user_id"]
         request.state.auth_token = token
+        request.state.username = claims.get("username", "")
 
         return await call_next(request)

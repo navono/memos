@@ -1,5 +1,9 @@
 import { lazy } from "react";
-import { createBrowserRouter, Navigate, type RouteObject } from "react-router-dom";
+import {
+  createBrowserRouter,
+  Navigate,
+  type RouteObject,
+} from "react-router-dom";
 import App from "@/App";
 import { ChunkLoadErrorFallback } from "@/components/ErrorBoundary";
 import MainLayout from "@/layouts/MainLayout";
@@ -8,12 +12,15 @@ import { LandingRoute, RequireAuthRoute, RequireGuestRoute } from "./guards";
 import { ROUTES } from "./routes";
 
 // Wrap lazy imports to auto-reload on chunk load failure (e.g., after redeployment).
-function lazyWithReload<T extends React.ComponentType>(factory: () => Promise<{ default: T }>) {
+function lazyWithReload<T extends React.ComponentType>(
+  factory: () => Promise<{ default: T }>,
+) {
   return lazy(() =>
     factory().catch((error) => {
       const isChunkError =
-        error?.message?.includes("Failed to fetch dynamically imported module") ||
-        error?.message?.includes("Importing a module script failed");
+        error?.message?.includes(
+          "Failed to fetch dynamically imported module",
+        ) || error?.message?.includes("Importing a module script failed");
       const reloadKey = "chunk-reload";
       if (isChunkError && !sessionStorage.getItem(reloadKey)) {
         sessionStorage.setItem(reloadKey, "1");
@@ -25,6 +32,7 @@ function lazyWithReload<T extends React.ComponentType>(factory: () => Promise<{ 
 }
 
 const AdminSignIn = lazyWithReload(() => import("@/pages/AdminSignIn"));
+const AgentChat = lazyWithReload(() => import("@/pages/AgentChat"));
 const About = lazyWithReload(() => import("@/pages/About"));
 const Archived = lazyWithReload(() => import("@/pages/Archived"));
 const AuthCallback = lazyWithReload(() => import("@/pages/AuthCallback"));
@@ -33,7 +41,9 @@ const Home = lazyWithReload(() => import("@/pages/Home"));
 const Inboxes = lazyWithReload(() => import("@/pages/Inboxes"));
 const MemoDetail = lazyWithReload(() => import("@/pages/MemoDetail"));
 const NotFound = lazyWithReload(() => import("@/pages/NotFound"));
-const PermissionDenied = lazyWithReload(() => import("@/pages/PermissionDenied"));
+const PermissionDenied = lazyWithReload(
+  () => import("@/pages/PermissionDenied"),
+);
 const Attachments = lazyWithReload(() => import("@/pages/Attachments"));
 const Setting = lazyWithReload(() => import("@/pages/Setting"));
 const Shortcuts = lazyWithReload(() => import("@/pages/Shortcuts"));
@@ -93,6 +103,7 @@ export const routeConfig: RouteObject[] = [
                 children: [
                   { path: Routes.ARCHIVED, element: <Archived /> },
                   { path: Routes.SHORTCUTS, element: <Shortcuts /> },
+                  { path: Routes.AGENT, element: <AgentChat /> },
                 ],
               },
             ],

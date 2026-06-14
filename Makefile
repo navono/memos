@@ -27,7 +27,7 @@ dev:
 
 ## Start Memos backend (Go, port 5230, data dir $(DATA))
 dev-backend:
-	GOPROXY=$(GOPROXY) $(GO) run ./cmd/memos/ --port 5230 --data $(DATA)
+	GOPROXY=$(GOPROXY) $(GO) run ./cmd/memos/ --port 5230 --data $(DATA) --agent-addr http://localhost:8082
 
 ## Start web frontend (React, port 3001, proxies API to backend port 5230)
 dev-web:

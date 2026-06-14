@@ -122,7 +122,8 @@
     "username": "用户名",
     "version": "版本",
     "visibility": "可见性",
-    "yourself": "您自己"
+    "yourself": "您自己",
+    "agent": "AI 助手"
   },
   "locale-picker": {
     "no-language-feedback": "未找到语言？ 提交反馈"
@@ -711,5 +712,16 @@
     "connected": "已连接",
     "connecting": "正在连接",
     "disconnected": "已断开"
+  },
+  "agent": {
+    "select-agent": "选择助手",
+    "placeholder": "输入消息...",
+    "not-available": "AI 助手服务未启用",
+    "send": "发送",
+    "new-chat": "新对话",
+    "empty-message": "选择一个 AI 助手开始对话",
+    "chat-history": "对话记录",
+    "delete-chat": "删除对话",
+    "confirm-delete": "确定删除这条对话吗？"
   }
 }

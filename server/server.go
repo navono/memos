@@ -95,6 +95,9 @@ func NewServer(ctx context.Context, profile *profile.Profile, store *store.Store
 	}
 	mcpService.RegisterRoutes(echoServer)
 
+	// Register agent proxy routes (no-op if MEMOS_AGENT_ADDR is empty).
+	apiv1.NewAgentProxyService(profile, s.Secret, store).RegisterRoutes(echoServer)
+
 	return s, nil
 }
 

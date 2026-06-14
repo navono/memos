@@ -45,6 +45,7 @@ var (
 				Driver:      viper.GetString("driver"),
 				DSN:         viper.GetString("dsn"),
 				InstanceURL: viper.GetString("instance-url"),
+					AgentAddr:    viper.GetString("agent-addr"),
 			}
 			instanceProfile.Version = version.GetCurrentVersion()
 			instanceProfile.Commit = version.Commit
@@ -168,6 +169,7 @@ func init() {
 	rootCmd.PersistentFlags().String("driver", "sqlite", "database driver")
 	rootCmd.PersistentFlags().String("dsn", "", "database source name(aka. DSN)")
 	rootCmd.PersistentFlags().String("instance-url", "", "the url of your memos instance")
+	rootCmd.PersistentFlags().String("agent-addr", "", "address of the agent service (empty to disable)")
 	rootCmd.PersistentFlags().Bool("allow-private-webhooks", false, "allow webhook URLs to resolve to private/reserved IP addresses")
 	rootCmd.PersistentFlags().String("log-level", "info", "log verbosity level (debug, info, warn, error)")
 
@@ -193,6 +195,9 @@ func init() {
 		panic(err)
 	}
 	if err := viper.BindPFlag("instance-url", rootCmd.PersistentFlags().Lookup("instance-url")); err != nil {
+		panic(err)
+	}
+	if err := viper.BindPFlag("agent-addr", rootCmd.PersistentFlags().Lookup("agent-addr")); err != nil {
 		panic(err)
 	}
 	if err := viper.BindPFlag("allow-private-webhooks", rootCmd.PersistentFlags().Lookup("allow-private-webhooks")); err != nil {

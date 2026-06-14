@@ -152,3 +152,37 @@ class TestAgentDB:
         cursor = await db._db.execute("PRAGMA foreign_keys")
         row = await cursor.fetchone()
         assert row[0] == 1
+
+    async def test_create_conversation_with_agent_id(self, db):
+        """create_conversation should store agent_id."""
+        conv_id = await db.create_conversation(101, agent_id="summary")
+        conv = await db.get_conversation(conv_id)
+        assert conv["agent_id"] == "summary"
+
+    async def test_create_conversation_default_agent_id(self, db):
+        """create_conversation should default agent_id to 'general'."""
+        conv_id = await db.create_conversation(101)
+        conv = await db.get_conversation(conv_id)
+        assert conv["agent_id"] == "general"
+
+    async def test_list_conversations_by_agent(self, db):
+        """list_conversations should filter by agent_id."""
+        await db.create_conversation(101, agent_id="general")
+        await db.create_conversation(101, agent_id="summary")
+        await db.create_conversation(101, agent_id="summary")
+
+        all_convs = await db.list_conversations(101)
+        assert len(all_convs) == 3
+
+        summary_convs = await db.list_conversations(101, agent_id="summary")
+        assert len(summary_convs) == 2
+        assert all(c["agent_id"] == "summary" for c in summary_convs)
+
+        general_convs = await db.list_conversations(101, agent_id="general")
+        assert len(general_convs) == 1
+
+    async def test_delete_conversation(self, db):
+        """delete_conversation should remove the conversation."""
+        conv_id = await db.create_conversation(101, agent_id="summary")
+        await db.delete_conversation(conv_id)
+        assert await db.get_conversation(conv_id) is None
