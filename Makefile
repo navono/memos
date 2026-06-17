@@ -12,7 +12,7 @@ GOPROXY ?= https://goproxy.cn,direct
 # Data dir for the backend (SQLite lives at $(DATA)/memos_prod.db).
 # Override on the command line: make dev DATA=/path/to/db
 # DATA ?= output/db
-DATA ?= /Users/pingqixing/data/NAS/memos
+DATA ?= /home/ubuntu/data/memos
 
 # --- Dev commands ---
 
@@ -67,7 +67,12 @@ type-gen:
 #   make docker-build TAG=personal-fd18f559 PLATFORM=linux/amd64
 IMAGE    ?= navono/memos
 TAG      ?= personal
-PLATFORM ?= linux/arm64
+# Default to the build host's native architecture so `make docker-build` works
+# out-of-the-box. To cross-build (e.g. arm64 on an x86_64 host) the target arch
+# must be emulated — register QEMU binfmt first:
+#   docker run --privileged --rm tonistiigi/binfmt --install all
+HOSTARCH := $(shell uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/; s/armv8l/arm64/')
+PLATFORM ?= linux/$(HOSTARCH)
 
 ## Build the Docker image (runs `pnpm release` first to embed frontend assets)
 docker-build:
@@ -86,30 +91,17 @@ docker-push:
 docker-login:
 	docker login
 
-## Run the image locally for smoke testing (port 5230, data dir output/docker-data)
-docker-run:
-	docker run -d --name memos --rm \
-	  -p 5230:5230 \
-	  -v $$(pwd)/output/docker-data:/var/opt/memos \
-	  -e MEMOS_PORT=5230 \
-	  $(IMAGE):$(TAG)
-
-## Stop and remove the local memos container
-docker-stop:
-	docker stop memos 2>/dev/null || true
-	docker rm memos 2>/dev/null || true
-
-## Pull the image (use on the server before redeploying)
-docker-pull:
-	docker pull $(IMAGE):$(TAG)
-
 ## Start the stack via docker compose (uses scripts/compose.yaml)
-docker-compose-up:
+docker-up:
 	docker compose -f scripts/compose.yaml up -d
 
 ## Stop the stack via docker compose
-docker-compose-down:
+docker-down:
 	docker compose -f scripts/compose.yaml down
+
+## Show logs from the stack
+docker-logs:
+	docker compose -f scripts/compose.yaml logs -f
 
 # --- Test ---
 
