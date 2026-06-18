@@ -1,8 +1,10 @@
 services:
   memos:
-    image: neosmemo/memos:stable
+    # Use the locally built image (make docker-build) instead of the upstream one.
+    image: navono/memos:personal
+    pull_policy: never
     container_name: memos
     volumes:
-      - ~/.memos/:/var/opt/memos
+      - /home/ubuntu/data/memos:/var/opt/memos
     ports:
       - 5230:5230
