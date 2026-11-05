@@ -286,7 +286,7 @@ func TestServeAttachmentFile_SVGThumbnailServedAsImageWithSecurityHeaders(t *tes
 	require.Equal(t, svgContent, rec.Body.Bytes())
 }
 
-func TestServeAttachmentFile_ThumbnailWithSensitiveMetadataServesOriginal(t *testing.T) {
+func TestServeAttachmentFile_ThumbnailWithSensitiveMetadataGeneratesThumbnail(t *testing.T) {
 	ctx := context.Background()
 	svc, fs, _, cleanup := newShareAttachmentTestServices(ctx, t)
 	defer cleanup()
@@ -328,8 +328,8 @@ func TestServeAttachmentFile_ThumbnailWithSensitiveMetadataServesOriginal(t *tes
 	e.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "image/png", rec.Header().Get("Content-Type"))
-	require.Equal(t, imageContent, rec.Body.Bytes())
+	require.Equal(t, "image/jpeg", rec.Header().Get("Content-Type"))
+	require.NotEqual(t, imageContent, rec.Body.Bytes())
 }
 
 func TestHasThumbnailSensitiveMetadata(t *testing.T) {

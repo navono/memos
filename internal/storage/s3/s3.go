@@ -100,6 +100,23 @@ func (c *Client) GetObjectStream(ctx context.Context, key string) (io.ReadCloser
 	return output.Body, nil
 }
 
+// GetObjectStreamRange retrieves an object from S3 as a stream, optionally
+// constrained by an HTTP Range header. The caller owns the returned body.
+func (c *Client) GetObjectStreamRange(ctx context.Context, key, rangeHeader string) (io.ReadCloser, *s3.GetObjectOutput, error) {
+	input := &s3.GetObjectInput{
+		Bucket: c.Bucket,
+		Key:    aws.String(key),
+	}
+	if rangeHeader != "" {
+		input.Range = aws.String(rangeHeader)
+	}
+	output, err := c.Client.GetObject(ctx, input)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to get object")
+	}
+	return output.Body, output, nil
+}
+
 // DeleteObject deletes an object in S3.
 func (c *Client) DeleteObject(ctx context.Context, key string) error {
 	_, err := c.Client.DeleteObject(ctx, &s3.DeleteObjectInput{

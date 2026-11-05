@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -215,11 +217,34 @@ func (s *FileServerService) serveMediaStream(c *echo.Context, attachment *store.
 		return nil
 
 	case storepb.AttachmentStorageType_S3:
-		presignURL, err := s.getS3PresignedURL(c.Request().Context(), attachment)
+		// The S3 endpoint is a private reverse tunnel (172.17.0.1:9000), so a
+		// browser cannot follow a presigned redirect. Stream the object through
+		// the /file/ proxy instead and forward Range requests for seeking.
+		s3Client, s3Object, err := s.createS3Client(attachment)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate presigned URL").Wrap(err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to create S3 client").Wrap(err)
 		}
-		return c.Redirect(http.StatusTemporaryRedirect, presignURL)
+		body, output, err := s3Client.GetObjectStreamRange(c.Request().Context(), s3Object.Key, c.Request().Header.Get("Range"))
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to stream from S3").Wrap(err)
+		}
+		defer body.Close()
+
+		c.Response().Header().Set("Accept-Ranges", "bytes")
+		if output.ContentRange != nil {
+			c.Response().Header().Set("Content-Range", *output.ContentRange)
+		}
+		if output.ContentLength != nil {
+			c.Response().Header().Set("Content-Length", strconv.FormatInt(*output.ContentLength, 10))
+		}
+		if output.LastModified != nil {
+			c.Response().Header().Set("Last-Modified", output.LastModified.UTC().Format(http.TimeFormat))
+		}
+		status := http.StatusOK
+		if output.ContentRange != nil {
+			status = http.StatusPartialContent
+		}
+		return c.Stream(status, contentType, body)
 
 	default:
 		// Database storage fallback.
@@ -455,27 +480,11 @@ func (s *FileServerService) getThumbnailPath(attachment *store.Attachment) (stri
 	return filepath.Join(cacheFolder, filename), nil
 }
 
-func (s *FileServerService) shouldUseOriginalForThumbnail(ctx context.Context, attachment *store.Attachment) (bool, error) {
-	if attachment.Type == "image/heic" || attachment.Type == "image/heif" {
-		return true, nil
-	}
-
-	if attachment.Type != "image/jpeg" && attachment.Type != "image/jpg" && attachment.Type != "image/png" && attachment.Type != "image/webp" {
-		return false, nil
-	}
-
-	reader, err := s.getAttachmentReader(ctx, attachment)
-	if err != nil {
-		return false, errors.Wrap(err, "failed to open image for metadata probe")
-	}
-	defer reader.Close()
-
-	probe, err := io.ReadAll(io.LimitReader(reader, thumbnailMetadataProbeSize))
-	if err != nil {
-		return false, errors.Wrap(err, "failed to read image metadata probe")
-	}
-
-	return hasThumbnailSensitiveMetadata(attachment.Type, probe), nil
+func (s *FileServerService) shouldUseOriginalForThumbnail(_ context.Context, attachment *store.Attachment) (bool, error) {
+	// HEIC/HEIF cannot be decoded by the imaging package. JPEG/PNG/WebP are
+	// always thumbnailed; generateThumbnail preserves the JPEG ICC profile so
+	// previews keep their colors instead of serving the full-size original.
+	return attachment.Type == "image/heic" || attachment.Type == "image/heif", nil
 }
 
 func hasThumbnailSensitiveMetadata(mimeType string, data []byte) bool {
@@ -539,7 +548,13 @@ func (s *FileServerService) generateThumbnail(ctx context.Context, attachment *s
 	}
 	defer reader.Close()
 
-	img, err := imaging.Decode(reader, imaging.AutoOrientation(true))
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read attachment")
+	}
+
+	iccProfile := extractJPEGICCProfile(data)
+	img, err := imaging.Decode(bytes.NewReader(data), imaging.AutoOrientation(true))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decode image")
 	}
@@ -549,17 +564,122 @@ func (s *FileServerService) generateThumbnail(ctx context.Context, attachment *s
 
 	thumbnailImage := imaging.Resize(img, thumbnailWidth, thumbnailHeight, imaging.Lanczos)
 
-	output, err := os.Create(thumbnailPath)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create thumbnail file")
+	var encoded bytes.Buffer
+	if err := imaging.Encode(&encoded, thumbnailImage, imaging.JPEG, imaging.JPEGQuality(90)); err != nil {
+		return nil, errors.Wrap(err, "failed to encode thumbnail")
 	}
-	defer output.Close()
-
-	if err := imaging.Encode(output, thumbnailImage, imaging.JPEG, imaging.JPEGQuality(90)); err != nil {
-		return nil, errors.Wrap(err, "failed to save thumbnail")
+	thumbnail := encoded.Bytes()
+	if len(iccProfile) > 0 {
+		thumbnail = injectJPEGICCProfile(thumbnail, iccProfile)
 	}
 
-	return s.readCachedThumbnail(thumbnailPath)
+	// Write atomically so a concurrent request never reads a partial JPEG.
+	tmpPath := thumbnailPath + ".tmp"
+	if err := os.WriteFile(tmpPath, thumbnail, 0o644); err != nil {
+		return nil, errors.Wrap(err, "failed to write thumbnail")
+	}
+	if err := os.Rename(tmpPath, thumbnailPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, errors.Wrap(err, "failed to commit thumbnail")
+	}
+	return thumbnail, nil
+}
+
+// extractJPEGICCProfile returns the concatenated ICC profile carried in JPEG
+// APP2 segments. It returns nil for non-JPEG data, incomplete profiles, and
+// profiles whose data color space is not RGB: a CMYK profile must not be
+// embedded in the RGB thumbnail.
+func extractJPEGICCProfile(data []byte) []byte {
+	if len(data) < 4 || data[0] != 0xFF || data[1] != 0xD8 {
+		return nil
+	}
+
+	type iccChunk struct {
+		seq  int
+		data []byte
+	}
+	var chunks []iccChunk
+	total := 0
+
+	for i := 2; i+4 <= len(data); {
+		if data[i] != 0xFF {
+			i++
+			continue
+		}
+		marker := data[i+1]
+		if marker == 0xD8 || marker == 0xD9 {
+			i += 2
+			continue
+		}
+		if marker == 0xDA { // Start of scan: metadata segments are over.
+			break
+		}
+		length := int(binary.BigEndian.Uint16(data[i+2 : i+4]))
+		if length < 2 || i+2+length > len(data) {
+			break
+		}
+		payload := data[i+4 : i+2+length]
+		if marker == 0xE2 && len(payload) >= 14 && string(payload[:12]) == "ICC_PROFILE\x00" {
+			chunks = append(chunks, iccChunk{seq: int(payload[12]), data: payload[14:]})
+			total = int(payload[13])
+		}
+		i += 2 + length
+	}
+
+	if total == 0 || len(chunks) != total {
+		return nil
+	}
+	profile := make([]byte, 0, total*1024)
+	for seq := 1; seq <= total; seq++ {
+		found := false
+		for _, chunk := range chunks {
+			if chunk.seq == seq {
+				profile = append(profile, chunk.data...)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+	}
+	if len(profile) < 20 || string(profile[16:20]) != "RGB " {
+		return nil
+	}
+	return profile
+}
+
+// injectJPEGICCProfile inserts an ICC profile as APP2 segments immediately
+// after the JPEG SOI marker. The thumbnail is returned unchanged when there is
+// no profile to inject.
+func injectJPEGICCProfile(jpegData, profile []byte) []byte {
+	if len(profile) == 0 || len(jpegData) < 2 || jpegData[0] != 0xFF || jpegData[1] != 0xD8 {
+		return jpegData
+	}
+
+	const maxChunk = 65519 // 65535 - 2 length bytes - 12 header - 2 seq/total
+	total := (len(profile) + maxChunk - 1) / maxChunk
+	var out bytes.Buffer
+	out.Grow(len(jpegData) + len(profile) + total*16)
+	out.Write(jpegData[:2])
+
+	for seq := 1; seq <= total; seq++ {
+		start := (seq - 1) * maxChunk
+		end := start + maxChunk
+		if end > len(profile) {
+			end = len(profile)
+		}
+		payloadLen := 2 + 12 + 2 + (end - start)
+		out.Write([]byte{0xFF, 0xE2})
+		_ = binary.Write(&out, binary.BigEndian, uint16(payloadLen))
+		out.WriteString("ICC_PROFILE\x00")
+		out.WriteByte(byte(seq))
+		out.WriteByte(byte(total))
+		out.Write(profile[start:end])
+	}
+
+	out.Write(jpegData[2:])
+	return out.Bytes()
 }
 
 // calculateThumbnailDimensions calculates the target dimensions for a thumbnail.
