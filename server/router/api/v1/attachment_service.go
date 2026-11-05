@@ -427,9 +427,13 @@ func convertAttachmentFromStore(attachment *store.Attachment) *v1pb.Attachment {
 		memoName := fmt.Sprintf("%s%s", MemoNamePrefix, *attachment.MemoUID)
 		attachmentMessage.Memo = &memoName
 	}
-	if attachment.StorageType == storepb.AttachmentStorageType_EXTERNAL || attachment.StorageType == storepb.AttachmentStorageType_S3 {
+	if attachment.StorageType == storepb.AttachmentStorageType_EXTERNAL {
 		attachmentMessage.ExternalLink = attachment.Reference
 	}
+	// S3 references are presigned URLs for the configured endpoint. In this
+	// deployment the endpoint is the private reverse tunnel (172.17.0.1:9000),
+	// which browsers cannot reach. Leave ExternalLink empty so the frontend
+	// falls back to the /file/<name>/<filename> proxy route.
 
 	return attachmentMessage
 }
