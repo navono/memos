@@ -1,5 +1,5 @@
 .PHONY: dev-backend dev-web dev-agent dev stop rebuild-payloads test-go test-agent test-agent-unit test-agent-api test-agent-integration \
-        docker-build docker-push docker-login docker-run docker-stop docker-pull docker-compose-up docker-compose-down
+        docker-build docker-deploy docker-push docker-login docker-run docker-stop docker-pull docker-compose-up docker-compose-down
 
 # Tool paths (mise-managed)
 GO      := $(shell mise which go 2>/dev/null || echo go)
@@ -67,6 +67,9 @@ type-gen:
 #   make docker-build TAG=personal-fd18f559 PLATFORM=linux/amd64
 IMAGE    ?= navono/memos
 TAG      ?= personal
+# Deploy target for the personal VPS. Override on the command line.
+VPS      ?= tencent-sh
+COMPOSE_DIR ?= /home/ubuntu/sourcecode/memos/scripts
 # Default to the build host's native architecture so `make docker-build` works
 # out-of-the-box. To cross-build (e.g. arm64 on an x86_64 host) the target arch
 # must be emulated — register QEMU binfmt first:
@@ -74,14 +77,24 @@ TAG      ?= personal
 HOSTARCH := $(shell uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/; s/armv8l/arm64/')
 PLATFORM ?= linux/$(HOSTARCH)
 
-## Build the Docker image (runs `pnpm release` first to embed frontend assets)
+## Build the Docker image (installs deps, runs `pnpm release`, injects host CA)
 docker-build:
-	cd web && $(PNPM) release && cd ..
+	cd web && $(PNPM) install --frozen-lockfile && $(PNPM) release && cd ..
+	$(GO) mod vendor
+	cp /etc/ssl/certs/ca-certificates.crt scripts/host-ca-certificates.crt
 	docker build -f scripts/Dockerfile \
 	  -t $(IMAGE):$(TAG) \
 	  --build-arg VERSION=$(TAG) \
 	  --build-arg COMMIT=$$(git rev-parse --short HEAD) \
+	  --build-arg HTTP_PROXY=$${HTTP_PROXY:-} \
+	  --build-arg HTTPS_PROXY=$${HTTPS_PROXY:-} \
+	  --build-arg NO_PROXY=$${NO_PROXY:-} \
 	  --platform=$(PLATFORM) .
+
+## Deploy the built image to the VPS and recreate memos
+docker-deploy:
+	docker save $(IMAGE):$(TAG) | gzip -1 | ssh $(VPS) 'gunzip | docker load'
+	ssh $(VPS) "set -e; cd $(COMPOSE_DIR); cp docker-compose.yaml docker-compose.yaml.bak-\$$(date +%Y%m%d-%H%M%S); sed -i 's|^    image: navono/memos:.*|    image: $(IMAGE):$(TAG)|' docker-compose.yaml; docker compose config >/dev/null; docker compose up -d --force-recreate --no-deps memos; docker tag $(IMAGE):$(TAG) $(IMAGE):personal; docker inspect memos --format 'image={{.Config.Image}} id={{.Image}} status={{.State.Status}}'"
 
 ## Push the image to the configured registry (run `make docker-login` first)
 docker-push:

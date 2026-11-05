@@ -1,24 +1,25 @@
 FROM --platform=$BUILDPLATFORM golang:1.26.2-alpine AS backend
 WORKDIR /backend-build
 
+# Trust the build host's CA bundle before apk. The Alpine 3.21 bundle can lag
+# the CDN's current certificate chain.
+COPY scripts/host-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
 # Install build dependencies
-RUN apk add --no-cache git ca-certificates
+RUN apk add --no-cache ca-certificates
 
-# Copy go mod files and download dependencies (cached layer)
-COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
+# The ca-certificates package may replace the bundle; restore the host bundle.
+COPY scripts/host-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
-# Copy source code (use .dockerignore to exclude unnecessary files)
+# Copy source code and the generated vendor tree. `make docker-build` runs
+# `go mod vendor` first so the Docker build never needs Go module downloads.
 COPY . .
 
-# Please build frontend first, so that the static files are available.
-# Refer to `pnpm release` in package.json for the build command.
 ARG TARGETOS TARGETARCH VERSION=dev COMMIT=unknown
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
+RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build \
+      -mod=vendor \
       -trimpath \
       -ldflags="-s -w -X github.com/usememos/memos/internal/version.Version=${VERSION} -X github.com/usememos/memos/internal/version.Commit=${COMMIT} -extldflags '-static'" \
       -tags netgo,osusergo \
@@ -27,6 +28,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # Use minimal Alpine with security updates
 FROM alpine:3.21 AS monolithic
+
+# Trust the build host's CA bundle for the apk install below.
+COPY scripts/host-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 # Install runtime dependencies and create non-root user in single layer
 RUN apk add --no-cache tzdata ca-certificates su-exec && \
